@@ -23,6 +23,23 @@ async function getDocumentosPessoaFisica(id) {
     return rows.length > 0 ? rows[0] : null;
 }
 
+// Função para buscar documentos detalhados da pessoa física
+async function getPessoaJuridica(id) {
+    const [rows] = await db.query(
+        `SELECT pj.sigla as orgao_comando_colocacao_sigla, p.nome_completo as orgao_comando_colocacao_nome FROM piips_v2.sigpq_funcionario_orgaos sfo
+        JOIN pessoas p ON p.id = sfo.pessoajuridica_id
+        JOIN pessoajuridicas pj ON pj.id = sfo.pessoajuridica_id
+        WHERE sfo.eliminado = 0
+        AND sfo.pessoajuridica_id = pj.id 
+        AND sfo.activo = 1
+        AND sfo.nivel_colocacao = 'muito-alto'
+        AND sfo.pessoafisica_id = ?;`,
+        [id]
+    );
+
+    return rows.length > 0 ? rows[0] : null;
+}
+
 function formatarData(dataIso) {
     if (!dataIso) return null;
     const data = new Date(dataIso);
@@ -37,8 +54,7 @@ function formatarData(dataIso) {
 
 const camposAgentes = [
     "naturalidade",
-    "funcao_cargo",
-    "orgao_comando_colocacao",
+    "funcao_cargo", 
     "estado_atual", // Ativo ou Reformado
 ];
 
@@ -201,6 +217,7 @@ router.get('/agentes/:id', async (req, res) => {
 
         // 2. Busca os dados complementares da Pessoa Física usando a função que criamos
         const dadosExtra = await getDadosPessoaFisica(id);
+        const pessoajuridica = await getPessoaJuridica(id);
         const documentos = await getDocumentosPessoaFisica(id);
 
         // 3. Junta tudo num objeto único
@@ -208,6 +225,7 @@ router.get('/agentes/:id', async (req, res) => {
             ...agenteBase,
             ...dadosExtra,
             ...documentos,
+            ...pessoajuridica,
             data_nascimento: formatarData(agenteBase.data_nascimento),
             data_ingresso_pna: formatarData(agenteBase.data_ingresso_pna),
             // Cálculo de idade opcional
