@@ -2,6 +2,46 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
+// Função para buscar dados detalhados da pessoa física
+async function getDadosPessoaFisica(id) {
+    const [rows] = await db.query(
+        'SELECT foto_civil, nome_mae, nome_pai, iban FROM pessoafisicas WHERE id = ?',
+        [id]
+    );
+    return rows.length > 0 ? rows[0] : null;
+}
+
+// Função para buscar documentos detalhados da pessoa física
+async function getDocumentosPessoaFisica(id) {
+    const [rows] = await db.query(
+        `SELECT nid FROM sigpq_documentos  
+        WHERE activo = 1 
+        AND eliminado = 0
+        AND pessoafisica_id = ?`,
+        [id]
+    );
+    return rows.length > 0 ? rows[0] : null;
+}
+
+function formatarData(dataIso) {
+    if (!dataIso) return null;
+    const data = new Date(dataIso);
+
+    // Usar métodos UTC evita que a data "atrase" um dia devido ao fuso horário local
+    const dia = String(data.getUTCDate()).padStart(2, '0');
+    const mes = String(data.getUTCMonth() + 1).padStart(2, '0');
+    const ano = data.getUTCFullYear();
+
+    return `${dia}/${mes}/${ano}`;
+}
+
+const camposAgentes = [
+    "naturalidade",
+    "funcao_cargo",
+    "orgao_comando_colocacao",
+    "estado_atual", // Ativo ou Reformado
+];
+
 
 // GET /agentes
 router.get('/agentes', async (req, res) => {
@@ -131,14 +171,55 @@ router.get('/agentes/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
+        // 1. Busca os dados principais do funcionário/agente
         const [rows] = await db.query(
-            'SELECT * FROM users WHERE id = ?',
+            `SELECT 
+                F.id, 
+                F.nome_completo, 
+                F.pseudonimo, 
+                F.foto_efectivo,
+                F.genero, 
+                F.data_nascimento, 
+                F.data_adesao as data_ingresso_pna, 
+                F.nip, 
+                F.numero_agente,
+                P.nome as Patente_nome,
+                pessoajuridicas.sigla as Colocacao_sigla    
+            FROM sigpq_funcionarios F
+            JOIN patentes P ON P.id = F.patente_id
+            JOIN sigpq_funcionario_orgaos FO ON FO.pessoafisica_id = F.id
+            JOIN pessoajuridicas ON pessoajuridicas.id = FO.pessoajuridica_id
+            WHERE F.id = ? AND FO.activo = true`,
             [id]
         );
 
-        res.json(rows[0] || {});
+        const agenteBase = rows[0];
+
+        if (!agenteBase) {
+            return res.status(404).json({ message: 'Agente não encontrado' });
+        }
+
+        // 2. Busca os dados complementares da Pessoa Física usando a função que criamos
+        const dadosExtra = await getDadosPessoaFisica(id);
+        const documentos = await getDocumentosPessoaFisica(id);
+
+        // 3. Junta tudo num objeto único
+        const perfilCompleto = {
+            ...agenteBase,
+            ...dadosExtra,
+            ...documentos,
+            data_nascimento: formatarData(agenteBase.data_nascimento),
+            data_ingresso_pna: formatarData(agenteBase.data_ingresso_pna),
+            // Cálculo de idade opcional
+            idade: agenteBase.data_nascimento ?
+                new Date().getFullYear() - new Date(agenteBase.data_nascimento).getFullYear() : null
+        };
+
+        res.json(perfilCompleto);
+
     } catch (error) {
-        res.status(500).json({ erro: 'Erro ao buscar usuário' });
+        console.error(error);
+        res.status(500).json({ erro: 'Erro ao buscar detalhes do agente' });
     }
 });
 
